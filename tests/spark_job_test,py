@@ -1,0 +1,93 @@
+import os
+import sys
+
+import pytest
+from pyspark.sql import SparkSession
+from pyspark.sql.types import (
+    StructType, StructField, StringType, DoubleType,
+    BooleanType, IntegerType
+)
+from data.spark_job import process_transactions
+
+@pytest.fixture(scope="module")
+def spark():
+    spark = SparkSession.builder \
+        .appName("PySparkUnitTest") \
+        .master("local[*]") \
+        .getOrCreate()
+    yield spark
+    spark.stop()
+
+class TestTransactionProcessing:
+    @pytest.fixture(autouse=True)
+    def setup_data(self, spark):
+        txn_schema = StructType([
+            StructField("transaction_id", StringType(), False),
+            StructField("cardholder_id", StringType(), False),
+            StructField("merchant_id", StringType(), False),
+            StructField("merchant_name", StringType(), False),
+            StructField("merchant_category", StringType(), False),
+            StructField("transaction_amount", DoubleType(), False),
+            StructField("transaction_timestamp", StringType(), False),
+            StructField("transaction_status", StringType(), False),
+            StructField("fraud_flag", BooleanType(), False),
+            StructField("merchant_location", StringType(), False),
+        ])
+        data = [
+            ("T001","CH001","M001","Walmart","Groceries", 120.50, "2025-02-04T10:00:00Z","SUCCESS",False,"NY,USA"),
+            ("T002","CH002","M002","Expedia","Travel", 9500.75, "2025-02-04T12:30:00Z","PENDING",True, "TO,CA"),
+            ("T003","CH003","M003","Amazon","Shopping", 75.20,  "2025-02-04T15:45:00Z","FAILED", False,"SF,USA"),
+        ]
+        self.txn_df = spark.createDataFrame(data, schema=txn_schema)
+
+        card_schema = StructType([
+            StructField("cardholder_id", StringType(), False),
+            StructField("customer_name", StringType(), False),
+            StructField("reward_points", IntegerType(), False),
+            StructField("risk_score", DoubleType(), False),
+        ])
+        cards = [
+            ("CH001","John Doe",4500,0.15),
+            ("CH002","Jane Smith",1200,0.35),
+            ("CH003","Ali Khan",8000,0.10),
+        ]
+        self.card_df = spark.createDataFrame(cards, schema=card_schema)
+
+    def test_transaction_category(self):
+        df = process_transactions(self.txn_df, self.card_df)
+        categories = {r['transaction_id']: r['transaction_category'] for r in df.select('transaction_id','transaction_category').collect()}
+        assert categories['T001'] == 'Medium'
+        assert categories['T002'] == 'High'
+        assert categories['T003'] == 'Low'
+
+    def test_high_risk_flag(self):
+        df = process_transactions(self.txn_df, self.card_df)
+        risks = {r['transaction_id']: r['high_risk'] for r in df.select('transaction_id','high_risk').collect()}
+        assert risks['T001'] is False
+        assert risks['T002'] is True
+        assert risks['T003'] is False
+
+    def test_fraud_risk_level(self):
+        df = process_transactions(self.txn_df, self.card_df)
+        levels = {r['transaction_id']: r['fraud_risk_level'] for r in df.select('transaction_id','fraud_risk_level').collect()}
+        assert levels['T001'] == 'Low'
+        assert levels['T002'] == 'Critical'
+        assert levels['T003'] == 'Low'
+
+    def test_reward_points_update(self):
+        df = process_transactions(self.txn_df, self.card_df)
+        rewards = {r['transaction_id']: r['updated_reward_points'] for r in df.select('transaction_id','updated_reward_points').collect()}
+        assert rewards['T001'] == 4512  
+        assert rewards['T002'] == 2150  
+        assert rewards['T003'] == 8008  
+
+    def test_merchant_info_column(self):
+        df = process_transactions(self.txn_df, self.card_df)
+        info = {r['transaction_id']: r['merchant_info'] for r in df.select('transaction_id','merchant_info').collect()}
+        assert info['T001'] == "Walmart - NY,USA"
+        assert info['T002'] == "Expedia - TO,CA"
+        assert info['T003'] == "Amazon - SF,USA"
+
+    def test_row_count(self):
+        df = process_transactions(self.txn_df, self.card_df)
+        assert df.count() == 3
