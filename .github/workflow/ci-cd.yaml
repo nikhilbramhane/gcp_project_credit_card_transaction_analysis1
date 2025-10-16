@@ -1,12 +1,12 @@
-name: Credit Card Transaction CICD
+name: Credit Card Transactions CICD
 
 on:
   push:
     branches:
-      -main
+      - main
 
 jobs:
-  run-test:
+  run-tests:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,46 +22,50 @@ jobs:
         run: |
           pip install -r utils/requirements.txt
           pip install pytest pytest-cov
-      
+
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
 
       - name: Run Pytest with Coverage
         run: |
           pytest --cov=data --cov-report=term --cov-fail-under=80 tests/spark_job_test.py
-      
+
       # - name: Run Pytest with Coverage
       #   run: |
       #     pytest --cov=data --cov-report=term --cov-fail-under=80
 
   deploy-to-prod:
     runs-on: ubuntu-latest
-    needs: rub-tests
+    needs: run-tests
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
-     
-      - name: Authenticate to GCP
-        uses: google-github-actions/auth@v1
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-      
-      - name: Setup Google Cloud SDK
-        uses: google-github-actions/setup-gcloud@v1
-        with: 
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
+        run: echo "deploy......"
 
-      # Upload Pyspark Job to GCS
-      - name: Upload Spark Job to GCS
-        run: |
-          gsutil cp data/spark_job.py gs://avd-bucket1-credit-card-analysis
-          gsutil cp data/load_users_to_bq.py gs://avd-bucket1-credit-card-analysis
-      
-      # Upload Airflow DAG to Composer
-      - name: Upload Airflow DAG to Composer
-        run: 
-          gcloud composer environments storage dags import \
-          --environments airflow-avd-credit-card-env \
-          --loaction us-central1 \
-          --source airflow/airflow_job.py
+    steps:
+       - name: Checkout Code
+         uses: actions/checkout@v3
+
+       - name: Authenticate to GCP
+         uses: google-github-actions/auth@v1
+         with:
+           credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+       - name: Setup Google Cloud SDK
+         uses: google-github-actions/setup-gcloud@v1
+         with:
+           project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+       # Upload PySpark Job to GCS
+       - name: Upload Spark Job to GCS
+         run: |
+           gsutil cp data/spark_job.py gs://avd-bucket1-credit-card-analysis/spark_job/
+           gsutil cp data/load_users_to_bq.py gs://avd-bucket1-credit-card-analysis/spark_job/
+          
+       # Upload Airflow DAG to Composer
+       - name: Upload Airflow DAG to Composer
+         run: |
+           gcloud composer environments storage dags import \
+             --environment airflow-avd-credit-card-env \
+             --location us-central1 \
+             --source airflow/airflow_job.py
